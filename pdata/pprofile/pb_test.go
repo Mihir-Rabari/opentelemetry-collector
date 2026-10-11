@@ -87,6 +87,57 @@ func TestProtoSizerEmptyProfiles(t *testing.T) {
 	assert.Equal(t, 2, sizer.ProfilesSize(NewProfiles()))
 }
 
+// MarshalProfiles converts inline resource and scope attribute strings to
+// dictionary references before marshaling, so the wire form differs from the
+// in-memory form. ProfilesSize must report the size of the wire form.
+// See https://github.com/open-telemetry/opentelemetry-collector/issues/15860.
+func TestProtoSizerMatchesMarshalProfiles(t *testing.T) {
+	marshaler := &ProtoMarshaler{}
+
+	td := NewProfiles()
+	td.Dictionary().StringTable().Append("preexisting-dictionary-string")
+	rp := td.ResourceProfiles().AppendEmpty()
+	rp.Resource().Attributes().PutStr("attr1", "my-very-long-service-name-used-everywhere")
+	rp.Resource().Attributes().PutStr("attr2", "my-very-long-service-name-used-everywhere")
+	rp.Resource().Attributes().PutStr("attr3", "my-very-long-service-name-used-everywhere")
+	sp := rp.ScopeProfiles().AppendEmpty()
+	sp.Scope().Attributes().PutStr("scope.attr", "scope-attribute-value")
+	sp.Profiles().AppendEmpty()
+	// Strings nested in maps and slices are also converted to references.
+	nestedMap := rp.Resource().Attributes().PutEmptyMap("nested")
+	nestedMap.PutStr("inner", "nested-string-value")
+	nestedSlice := rp.Resource().Attributes().PutEmptySlice("slice")
+	nestedSlice.AppendEmpty().SetStr("slice-string-value")
+
+	size := marshaler.ProfilesSize(td)
+
+	// Size must be a read-only operation: the data is still in its inline,
+	// unconverted form afterwards.
+	value, ok := rp.Resource().Attributes().Get("attr1")
+	require.True(t, ok)
+	assert.Equal(t, "my-very-long-service-name-used-everywhere", value.Str())
+	assert.Equal(t, 1, td.Dictionary().StringTable().Len())
+
+	buf, err := marshaler.MarshalProfiles(td)
+	require.NoError(t, err)
+	assert.Equal(t, len(buf), size)
+}
+
+func TestProtoSizerReadOnlyMatchesMarshalProfiles(t *testing.T) {
+	marshaler := &ProtoMarshaler{}
+
+	td := NewProfiles()
+	rp := td.ResourceProfiles().AppendEmpty()
+	rp.Resource().Attributes().PutStr("attr", "value")
+	rp.ScopeProfiles().AppendEmpty().Profiles().AppendEmpty()
+	td.MarkReadOnly()
+
+	size := marshaler.ProfilesSize(td)
+	buf, err := marshaler.MarshalProfiles(td)
+	require.NoError(t, err)
+	assert.Equal(t, len(buf), size)
+}
+
 func BenchmarkProfilesToProto(b *testing.B) {
 	marshaler := &ProtoMarshaler{}
 	profiles := generateBenchmarkProfiles(128)

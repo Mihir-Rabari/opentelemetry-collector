@@ -30,8 +30,16 @@ func (e *ProtoMarshaler) MarshalProfiles(pd Profiles) ([]byte, error) {
 	return buf, nil
 }
 
+// ProfilesSize returns the size in bytes of a marshaled Profiles. This
+// matches the length of the bytes MarshalProfiles produces: MarshalProfiles
+// converts resource and scope attribute strings to dictionary references
+// before marshaling, so the size is computed on a converted copy of the
+// input, which is left unmodified.
 func (e *ProtoMarshaler) ProfilesSize(pd Profiles) int {
-	return pd.getOrig().SizeProto()
+	pdToSize := NewProfiles()
+	pd.CopyTo(pdToSize)
+	convertProfilesToReferences(pdToSize)
+	return pdToSize.getOrig().SizeProto()
 }
 
 func (e *ProtoMarshaler) ResourceProfilesSize(pd ResourceProfiles) int {
